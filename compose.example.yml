@@ -1,0 +1,21 @@
+# Example: run the connector on a VPS with Docker Compose.
+#   cp compose.example.yml compose.yml
+#   create .env next to it (see README "Running it on a VPS"), chmod 600 .env
+#   docker compose up -d
+# Put your HTTPS reverse proxy in front of 127.0.0.1:8787 and use
+# https://<your-domain>/mcp as the connector URL in Claude.
+#
+# Run ONE container per volume: the Link refresh token in /data rotates on
+# every refresh, and two processes sharing it break the sign-in.
+services:
+  link-cli-mcp:
+    image: ghcr.io/shaneqi/linkclimcp:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8787:8787" # only reachable through your proxy
+    volumes:
+      - link-auth:/data
+
+volumes:
+  link-auth:
