@@ -54,7 +54,7 @@ test("initialize and tools/list", async () => {
   assert.match(init.body.result.instructions, /integer cents/);
   const list = await rpc(env(), "tools/list", {});
   const names = list.body.result.tools.map((t) => t.name);
-  assert.deepEqual(names, ["auth_status", "sign_in", "list_sources", "list_balances", "list_transactions", "list_insight_types", "list_insights"]);
+  assert.deepEqual(names, ["auth_status", "sign_in", "sign_out", "list_sources", "list_balances", "list_transactions", "list_insight_types", "list_insights"]);
   assert.equal(list.body.result.tools.find((t) => t.name === "list_balances").annotations.readOnlyHint, true);
 });
 
@@ -113,6 +113,20 @@ test("replace_existing logs out first", async () => {
   assert.equal(r.phrase, "apple banana");
   const seq = calls().map((c) => c.args.slice(0, 2).join(" "));
   assert.deepEqual(seq.slice(-2), ["auth logout", "auth login"]);
+});
+
+test("sign_out revokes the session", async () => {
+  const none = JSON.parse(textOf(await call(env(), "sign_out")));
+  assert.match(none.note, /Was not signed in/);
+  await call(env(), "sign_in");
+  await call(env({ approve: true }), "auth_status");
+  const r = JSON.parse(textOf(await call(env(), "sign_out")));
+  assert.equal(r.authenticated, false);
+  assert.match(r.note, /Signed out/);
+  assert.ok(calls().some((c) => c.args.slice(0, 2).join(" ") === "auth logout"));
+  assert.match(textOf(await call(env(), "list_sources")), /Not signed in/);
+  const list = await rpc(env(), "tools/list", {});
+  assert.equal(list.body.result.tools.find((t) => t.name === "sign_out").annotations.destructiveHint, true);
 });
 
 async function signedIn() {

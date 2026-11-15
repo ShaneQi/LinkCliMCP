@@ -143,6 +143,28 @@ export const TOOLS = [
     },
   },
   {
+    name: "sign_out",
+    title: "Sign out of Link",
+    description:
+      "Signs this server out of Link: revokes the saved refresh token with Link and clears the sign-in " +
+      "(and any pending sign-in link). Every client using this connector loses access until someone signs " +
+      "in again with sign_in. Only use when the user asks to sign out or disconnect.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    destructive: true,
+    async run(env) {
+      const before = last(await runLinkCli(env, ["auth", "status"]));
+      await runLinkCli(env, ["auth", "logout"]);
+      const after = last(await runLinkCli(env, ["auth", "status"]));
+      if (after.authenticated) throw new UserError("link-cli logout finished but the server still reports a sign-in.");
+      return out({
+        authenticated: false,
+        note: before.authenticated || before.pending
+          ? "Signed out of Link. The refresh token was revoked and the saved sign-in cleared."
+          : "Was not signed in; nothing to sign out.",
+      });
+    },
+  },
+  {
     name: "list_sources",
     title: "List Link sources",
     description:
