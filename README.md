@@ -33,8 +33,13 @@ server.
    is dead (`refresh_token is not active: status: redeemed`). Running calls
    one at a time and letting link-cli save the new pair to its auth file
    keeps the chain intact.
-3. The auth file lives on a persistent volume (`/data/link-auth.json`), so the
-   session survives restarts and redeploys. `LINK_ACCESS_TOKEN` /
+3. The sign-in lives on a persistent volume (`/data/link-auth.json`), so the
+   session survives restarts and redeploys. link-cli itself works on a copy
+   in the container's local temp directory, because it saves by renaming a
+   temp file over the target, which a Cloud Storage mount refuses. Before each
+   call the server copies the volume file in (it is the source of truth);
+   after each call, if link-cli changed the copy, the server overwrites the
+   volume file in place. `LINK_ACCESS_TOKEN` /
    `LINK_REFRESH_TOKEN` are deliberately ignored: link-cli does not save
    refreshed env tokens back, so they would die after the first hour.
 
@@ -177,6 +182,7 @@ idle; the session is refreshed on the next call instead.
 | `LINK_AUTH_FILE` | `/data/link-auth.json` | link-cli auth file (keep on a persistent volume) |
 | `LINK_CLIENT_NAME` | `Claude (read-only)` | Name shown in the Link app when approving sign-in |
 | `KEEPALIVE_MINUTES` | `0` | If signed in, do one cheap read this often; `0` = off |
+| `LINK_WORK_DIR` | `<tmpdir>/link-cli-mcp` | Local directory for link-cli's working copy of the auth file |
 | `LINK_CLI_TIMEOUT_SECONDS` | `60` | Per-call timeout for link-cli |
 | `LINK_CLI_BIN` | bundled link-cli | Path to another link-cli `cli.js` (tests use a fake) |
 | `PORT` | `8787` | HTTP port |
@@ -235,7 +241,7 @@ Artifact Registry login, its image line and the Cloud Run steps.
 | `src/index.js` | fetch-style handler: bearer-token check (constant time), routes `/mcp` |
 | `src/mcp.js` | Stateless MCP over Streamable HTTP (initialize, ping, tools/list, tools/call); server instructions |
 | `src/tools.js` | Tool definitions, argument validation, pagination of `transactions list` |
-| `src/linkcli.js` | Runs link-cli: command allowlist, one-at-a-time queue, minimal child env, JSON parsing, redaction, error messages |
+| `src/linkcli.js` | Runs link-cli: command allowlist, one-at-a-time queue, working copy of the auth file synced to `LINK_AUTH_FILE` without renames, minimal child env, JSON parsing, redaction, error messages |
 | `test/` | `node --test`; `fake-link-cli.mjs` stands in for link-cli (state in the auth file, call log next to it) |
 
 ### link-cli behaviour this relies on (1.3.0)
@@ -247,6 +253,11 @@ Artifact Registry login, its image line and the Cloud Run steps.
   approved and saves tokens. Both emit a JSON **array** (streamed results).
 - `auth login` when already signed in only refreshes and says so; adding
   access needs `auth upgrade` (merges scopes/actions) or `auth logout` first.
+- It saves the auth file with `conf` → `atomically`: write
+  `<file>.tmp-<random>`, then rename over `<file>`. On a Cloud Run Cloud
+  Storage mount the rename fails with `EACCES`, which is why link-cli only
+  ever sees a local working copy. Leftover `link-auth.json.tmp-*` files are
+  removed at startup.
 - Errors: exit 1 with `{ code, message, cta }` on stdout (e.g.
   `NOT_AUTHENTICATED`).
 - Its postinstall runs `npx skills add …`; skipped by `--ignore-scripts` in
