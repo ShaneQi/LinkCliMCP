@@ -4,7 +4,7 @@
 //   GET  /health  (also /healthz; Cloud Run reserves paths ending in "z")
 //
 // Configuration (environment variables):
-//   ACCESS_TOKEN        required: bearer token Claude sends
+//   ACCESS_TOKEN        required: bearer token Claude sends (exits if unset)
 //   LINK_AUTH_FILE      link-cli sign-in file (default /data/link-auth.json).
 //                       Keep it on a persistent volume: the refresh token in it
 //                       rotates on every refresh and the old one stops working.
@@ -27,7 +27,10 @@ const { LINK_ACCESS_TOKEN, LINK_REFRESH_TOKEN, ...env } = process.env;
 if (LINK_ACCESS_TOKEN || LINK_REFRESH_TOKEN) {
   console.warn("warning: LINK_ACCESS_TOKEN / LINK_REFRESH_TOKEN are ignored; sign in with the sign_in tool instead");
 }
-if (!env.ACCESS_TOKEN) console.warn("warning: ACCESS_TOKEN is not set");
+if (!env.ACCESS_TOKEN?.trim()) {
+  console.error("error: ACCESS_TOKEN is not set. Set it to a long random string (openssl rand -base64 32); Claude sends it as Authorization: Bearer <token>.");
+  process.exit(1);
+}
 
 async function readBody(req) {
   const chunks = [];

@@ -173,7 +173,7 @@ idle; the session is refreshed on the next call instead.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ACCESS_TOKEN` | (required) | Bearer token Claude must send |
+| `ACCESS_TOKEN` | (required) | Bearer token Claude must send; the server exits at startup if it is unset |
 | `LINK_AUTH_FILE` | `/data/link-auth.json` | link-cli auth file (keep on a persistent volume) |
 | `LINK_CLIENT_NAME` | `Claude (read-only)` | Name shown in the Link app when approving sign-in |
 | `KEEPALIVE_MINUTES` | `0` | If signed in, do one cheap read this often; `0` = off |
