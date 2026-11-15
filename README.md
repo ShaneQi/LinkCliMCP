@@ -12,8 +12,8 @@ Claude only ever holds a separate access token. The Link sign-in stays on the
 server.
 
 - **Tools:** `list_sources`, `list_balances`, `list_transactions` (follows
-  pages for you), `list_insight_types`, `list_insights`, plus `auth_status` and
-  `sign_in` for the server's own Link sign-in.
+  pages for you), `list_insight_types`, `list_insights`, plus `auth_status`,
+  `sign_in` and `sign_out` for the server's own Link sign-in.
 - **Read-only by construction:** the server can only run `auth`, `sources
   list`, `balances list`, `transactions list` and `insights list*`.
   `spend-request`, `mpp`, `ucp`, `payment-methods`, `shipping-address`,
@@ -55,6 +55,19 @@ Default access: `read_balances`, `read_external_transactions`,
 accounts later, `sign_in` with `mode: "add_access"` keeps the current session
 and merges in the new approval. `replace_existing: true` signs out and starts
 over (use it when the session has expired).
+
+### Signing out
+
+Ask Claude to sign out of Link (it calls `sign_out`). The server runs
+`link-cli auth logout`, which revokes the refresh token with Link and clears
+`/data/link-auth.json`, including any pending sign-in link. Every client using
+the connector loses access until someone signs in again. Without Claude:
+
+    docker exec link-cli-mcp node /app/node_modules/@stripe/link-cli/dist/cli.js \
+      --auth /data/link-auth.json auth logout
+
+Deleting the file also signs the server out, but leaves the token valid on
+Link's side until it expires.
 
 ## Running it on a VPS
 
