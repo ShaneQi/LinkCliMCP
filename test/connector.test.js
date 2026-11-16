@@ -6,14 +6,19 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../src/index.js";
 import { runLinkCli, redact } from "../src/linkcli.js";
+import { ACCESS_ENV, installTestKeys, validToken } from "./access-helper.js";
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-link-cli.mjs");
 let dir, ENV;
 
-beforeEach(() => {
+let TOKEN;
+
+beforeEach(async () => {
+  await installTestKeys();
+  TOKEN ??= await validToken();
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "linkmcp-"));
   ENV = {
-    ACCESS_TOKEN: "secret-token",
+    ...ACCESS_ENV,
     LINK_REFRESH_TOKEN: "liwlrt_must_not_reach_cli",
     LINK_CLI_BIN: FAKE,
     LINK_AUTH_FILE: path.join(dir, "auth.json"),
@@ -27,10 +32,10 @@ function env(fake = {}) {
   return ENV;
 }
 
-async function rpc(e, method, params, token = "secret-token") {
+async function rpc(e, method, params, token = TOKEN) {
   const req = new Request("https://w.example/mcp", {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { "Cf-Access-Jwt-Assertion": token, "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
   });
   const res = await worker.fetch(req, e);
@@ -79,7 +84,7 @@ test("sign-in flow is read-only and never leaks tokens", async () => {
     "--source-actions", "read_source_details", "--format", "json",
   ]);
   assert.equal(login.env.NO_UPDATE_NOTIFIER, "1");
-  assert.equal(login.env.ACCESS_TOKEN, undefined);
+  assert.equal(login.env.CF_ACCESS_AUD, undefined);
   assert.equal(login.env.LINK_REFRESH_TOKEN, undefined);
 
   const pending = JSON.parse(textOf(await call(env(), "auth_status")));

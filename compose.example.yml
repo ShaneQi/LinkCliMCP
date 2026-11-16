@@ -1,9 +1,11 @@
 # Example: run the connector on a VPS with Docker Compose.
 #   cp compose.example.yml compose.yml
-#   create .env next to it (see README "Running it on a VPS"), chmod 600 .env
+#   create .env next to it (see README "Running it on a VPS"), chmod 600 .env;
+#   it needs CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD
 #   docker compose up -d
-# Put your HTTPS reverse proxy in front of 127.0.0.1:8787 and use
-# https://<your-domain>/mcp as the connector URL in Claude.
+# Reach 127.0.0.1:8787 through Cloudflare (a Tunnel, or a proxied hostname in
+# front of your HTTPS reverse proxy) with a Cloudflare Access application on
+# it, and use https://<your-domain>/mcp as the connector URL in Claude.
 #
 # Run ONE container per volume: the Link refresh token in /data rotates on
 # every refresh, and two processes sharing it break the sign-in.

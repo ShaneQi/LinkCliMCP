@@ -1,10 +1,11 @@
 // Node entry point: runs the connector as a plain-HTTP server (e.g. in a
 // container behind an HTTPS reverse proxy). Routes:
-//   POST /mcp     (Authorization: Bearer <ACCESS_TOKEN>)
+//   POST /mcp     (Cloudflare Access JWT: Cf-Access-Jwt-Assertion, or Authorization: Bearer)
 //   GET  /health  (also /healthz; Cloud Run reserves paths ending in "z")
 //
 // Configuration (environment variables):
-//   ACCESS_TOKEN        required: bearer token Claude sends (exits if unset)
+//   CF_ACCESS_TEAM_DOMAIN  required: Cloudflare Access team domain (exits if unset)
+//   CF_ACCESS_AUD       required: Access application AUD tag(s), comma-separated
 //   LINK_AUTH_FILE      link-cli sign-in file (default /data/link-auth.json).
 //                       Keep it on a persistent volume: the refresh token in it
 //                       rotates on every refresh and the old one stops working.
@@ -17,6 +18,7 @@
 // token chain break it.
 import http from "node:http";
 import app from "./index.js";
+import { accessConfig } from "./access.js";
 import { runLinkCli, authFile, idle } from "./linkcli.js";
 
 const PORT = Number(process.env.PORT || 8787);
@@ -27,8 +29,9 @@ const { LINK_ACCESS_TOKEN, LINK_REFRESH_TOKEN, ...env } = process.env;
 if (LINK_ACCESS_TOKEN || LINK_REFRESH_TOKEN) {
   console.warn("warning: LINK_ACCESS_TOKEN / LINK_REFRESH_TOKEN are ignored; sign in with the sign_in tool instead");
 }
-if (!env.ACCESS_TOKEN?.trim()) {
-  console.error("error: ACCESS_TOKEN is not set. Set it to a long random string (openssl rand -base64 32); Claude sends it as Authorization: Bearer <token>.");
+const access = accessConfig(env);
+if (!access) {
+  console.error("error: CF_ACCESS_TEAM_DOMAIN and CF_ACCESS_AUD must both be set (Cloudflare Access team domain and the application's AUD tag).");
   process.exit(1);
 }
 
@@ -79,7 +82,7 @@ async function keepalive() {
 }
 
 server.listen(PORT, () => {
-  console.log(`Link CLI MCP listening on :${PORT} (auth file: ${authFile(env)})`);
+  console.log(`Link CLI MCP listening on :${PORT} (Access issuer: ${access.issuer}, auth file: ${authFile(env)})`);
   if (KEEPALIVE_MINUTES > 0) setInterval(keepalive, KEEPALIVE_MINUTES * 60_000).unref();
 });
 
