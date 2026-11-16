@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stand-in for link-cli in tests. One directory above the --auth file it reads fake.json
+// Stand-in for link-cli in tests. Next to the --auth file it reads fake.json
 // (test settings: mode, approve), appends each call (argv + selected env) to
 // log.jsonl, and keeps its sign-in state in the auth file itself.
 import fs from "node:fs";
@@ -9,8 +9,7 @@ const argv = process.argv.slice(2);
 const i = argv.indexOf("--auth");
 const auth = argv[i + 1];
 const args = argv.filter((_, k) => k !== i && k !== i + 1);
-// The auth file is the server's working copy in <test dir>/work/; settings and log are in <test dir>.
-const dir = path.dirname(path.dirname(auth));
+const dir = path.dirname(auth);
 const cfg = fs.existsSync(path.join(dir, "fake.json")) ? JSON.parse(fs.readFileSync(path.join(dir, "fake.json"), "utf8")) : {};
 const log = (o) => fs.appendFileSync(path.join(dir, "log.jsonl"), JSON.stringify(o) + "\n");
 log({ args, at: "start", env: { LINK_REFRESH_TOKEN: process.env.LINK_REFRESH_TOKEN, ACCESS_TOKEN: process.env.ACCESS_TOKEN, NO_UPDATE_NOTIFIER: process.env.NO_UPDATE_NOTIFIER } });

@@ -9,8 +9,6 @@
 //                       Keep it on a persistent volume: the refresh token in it
 //                       rotates on every refresh and the old one stops working.
 //   LINK_CLIENT_NAME    name shown in the Link app at sign-in (default "Claude (read-only)")
-//   LINK_WORK_DIR       local directory for link-cli's working copy of the auth
-//                       file (default <tmpdir>/link-cli-mcp); see src/linkcli.js
 //   KEEPALIVE_MINUTES   make one cheap read this often so the session keeps
 //                       refreshing while idle (default 0 = off)
 //   PORT                default 8787
@@ -19,7 +17,7 @@
 // token chain break it.
 import http from "node:http";
 import app from "./index.js";
-import { runLinkCli, authFile, idle, cleanStaleTempFiles } from "./linkcli.js";
+import { runLinkCli, authFile, idle } from "./linkcli.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const KEEPALIVE_MINUTES = Number(process.env.KEEPALIVE_MINUTES ?? 0);
@@ -82,7 +80,6 @@ async function keepalive() {
 
 server.listen(PORT, () => {
   console.log(`Link CLI MCP listening on :${PORT} (auth file: ${authFile(env)})`);
-  cleanStaleTempFiles(env).then((n) => n && console.log(`removed ${n} stale temp file(s) next to the auth file`));
   if (KEEPALIVE_MINUTES > 0) setInterval(keepalive, KEEPALIVE_MINUTES * 60_000).unref();
 });
 

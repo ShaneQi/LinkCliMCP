@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "../src/index.js";
-import { runLinkCli, redact, resetSync, cleanStaleTempFiles } from "../src/linkcli.js";
+import { runLinkCli, redact } from "../src/linkcli.js";
 
 const FAKE = path.join(path.dirname(fileURLToPath(import.meta.url)), "fake-link-cli.mjs");
 let dir, ENV;
@@ -17,10 +17,8 @@ beforeEach(() => {
     LINK_REFRESH_TOKEN: "liwlrt_must_not_reach_cli",
     LINK_CLI_BIN: FAKE,
     LINK_AUTH_FILE: path.join(dir, "auth.json"),
-    LINK_WORK_DIR: path.join(dir, "work"),
     PATH: process.env.PATH,
   };
-  resetSync();
 });
 
 // Settings for the fake link-cli (see test/fake-link-cli.mjs).
@@ -129,47 +127,6 @@ test("sign_out revokes the session", async () => {
   assert.match(textOf(await call(env(), "list_sources")), /Not signed in/);
   const list = await rpc(env(), "tools/list", {});
   assert.equal(list.body.result.tools.find((t) => t.name === "sign_out").annotations.destructiveHint, true);
-});
-
-test("link-cli works on a local copy; the persistent file is written in place", async () => {
-  const persistent = path.join(dir, "auth.json");
-  await call(env(), "sign_in");
-  const login = calls().find((c) => c.args[1] === "login");
-  assert.ok(login, "login ran");
-  assert.ok(JSON.parse(fs.readFileSync(persistent, "utf8")).pending, "pending sign-in saved to the persistent file");
-  await call(env({ approve: true }), "auth_status");
-  assert.ok(JSON.parse(fs.readFileSync(persistent, "utf8")).tokens, "tokens saved to the persistent file");
-  assert.deepEqual(fs.readdirSync(dir).filter((n) => n.startsWith("auth.json")), ["auth.json"]);
-
-  // A fresh process (e.g. a new Cloud Run instance) picks the sign-in up from the persistent file.
-  resetSync();
-  fs.rmSync(path.join(dir, "work"), { recursive: true });
-  assert.equal(JSON.parse(textOf(await call(env(), "auth_status"))).authenticated, true);
-
-  // The persistent file is the source of truth: a change made elsewhere wins.
-  fs.rmSync(persistent);
-  assert.equal(JSON.parse(textOf(await call(env(), "auth_status"))).authenticated, false);
-  fs.writeFileSync(persistent, JSON.stringify({ tokens: { access_token: "liwlat_x", refresh_token: "liwlrt_y" } }));
-  assert.equal(JSON.parse(textOf(await call(env(), "auth_status"))).authenticated, true);
-
-  // sign_out clears the persistent file too.
-  await call(env(), "sign_out");
-  assert.equal(JSON.parse(fs.readFileSync(persistent, "utf8")).tokens, undefined);
-});
-
-test("a sign-in that cannot be saved is reported", async () => {
-  fs.mkdirSync(path.join(dir, "auth.json")); // a directory where the file should be: writes fail
-  const r = await call(env(), "sign_in");
-  assert.equal(r.isError, true);
-  assert.match(textOf(r), /could not (be saved|read)|Could not read/);
-});
-
-test("stale temp files next to the auth file are removed", async () => {
-  fs.writeFileSync(path.join(dir, "auth.json.tmp-47844295458a"), "{}");
-  fs.writeFileSync(path.join(dir, "auth.json.tmp-4784433423c4f"), "{}");
-  fs.writeFileSync(path.join(dir, "other.txt"), "keep");
-  assert.equal(await cleanStaleTempFiles(env()), 2);
-  assert.deepEqual(fs.readdirSync(dir).filter((n) => n !== "fake.json").sort(), ["other.txt"]);
 });
 
 async function signedIn() {
