@@ -8,8 +8,9 @@ or on Cloud Run, so it works from claude.ai on the web, desktop and mobile,
 Claude Code, Cowork and scheduled runs, without installing link-cli or
 juggling refresh tokens in each session.
 
-Claude only ever holds a separate access token. The Link sign-in stays on the
-server.
+Access is controlled by [Cloudflare Access](#authentication-cloudflare-access):
+the server only answers MCP requests that carry a valid Access JWT. The Link
+sign-in stays on the server.
 
 - **Tools:** `list_sources`, `list_balances`, `list_transactions` (follows
   pages for you), `list_insight_types`, `list_insights`, plus `auth_status`,
@@ -91,15 +92,15 @@ Or build it yourself: `docker build -t link-cli-mcp .`
 
 Create `.env` next to your compose file and `chmod 600 .env`:
 
-    # Required
-    ACCESS_TOKEN=<long random string>
+    # Required (see "Authentication (Cloudflare Access)")
+    CF_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
+    CF_ACCESS_AUD=<Application Audience (AUD) Tag>
 
     # Optional
     # LINK_CLIENT_NAME=Claude (read-only)   (name shown in the Link app at sign-in)
     # KEEPALIVE_MINUTES=0                   (cheap read every N minutes; 0 = off)
 
-`ACCESS_TOKEN`: make one with `openssl rand -base64 32`. Claude sends it as
-`Authorization: Bearer <token>`.
+The server exits at startup if either `CF_ACCESS_*` variable is missing.
 
 ### 3. Start
 
@@ -118,26 +119,23 @@ compose:
 **Run one container per volume.** Two processes refreshing the same token
 chain break the sign-in.
 
-### 4. HTTPS
+### 4. Put it behind Cloudflare Access
 
-Point your reverse proxy at `127.0.0.1:8787`. For example, a Caddyfile:
+The hostname must go through Cloudflare, e.g. a Cloudflare Tunnel
+(`cloudflared`) to `http://127.0.0.1:8787`, or a proxied DNS record in front
+of your HTTPS reverse proxy. Then add a self-hosted Access application for
+that hostname (see [Authentication](#authentication-cloudflare-access)).
 
-    link.example.com {
-        reverse_proxy 127.0.0.1:8787
-    }
-
-Check it: `curl https://link.example.com/health` → `ok`, and
-
-    curl -X POST https://link.example.com/mcp \
-      -H "Authorization: Bearer <ACCESS_TOKEN>" -H "Content-Type: application/json" \
-      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"auth_status","arguments":{}}}'
+Check it: `curl https://link.example.com/health` → `ok` (no token needed), and
+`curl -X POST https://link.example.com/mcp` without Access credentials is
+stopped by Access; straight to the origin (`curl -X POST
+http://127.0.0.1:8787/mcp`) it gets `401`.
 
 ### 5. Add it to Claude
 
-claude.ai → Settings → Connectors → Add custom connector:
-
-- URL: `https://link.example.com/mcp`
-- Request header: `Authorization` = `Bearer <ACCESS_TOKEN>`
+claude.ai → Settings → Connectors → Add custom connector with the URL
+`https://link.example.com/mcp`, authenticating the way your Access
+application's policy allows.
 
 Then ask Claude to sign in to Link (see [Signing in](#signing-in)).
 
@@ -162,18 +160,61 @@ image. Settings that matter here:
   --add-volume-mount volume=auth,mount-path=/data`). Without one, every new
   instance starts signed out. Use a private bucket only this service's
   runtime account can read.
-- `ACCESS_TOKEN` from Secret Manager (`--set-secrets ACCESS_TOKEN=<secret>:latest`).
-- Port 8787 (`--port 8787`), and `--allow-unauthenticated` (the bearer token
-  is the auth).
+- The runtime service account needs **Storage Object User** on that bucket.
+  The legacy bucket roles can't read objects, and link-cli's save (write a
+  temp file, then rename it) fails with `EACCES` without that.
+- `CF_ACCESS_TEAM_DOMAIN` and `CF_ACCESS_AUD` as env vars (`--set-env-vars`;
+  neither is a secret).
+- Port 8787 (`--port 8787`), and `--allow-unauthenticated`: Cloud Run's own
+  IAM check stays off because the container enforces Cloudflare Access on
+  every MCP request. Requests to the `run.app` URL that skip Access get `401`.
+- Reach it through a hostname Cloudflare proxies (a custom domain on Cloud
+  Run, or a Tunnel), protected by the Access application.
 
 With scale to zero, `KEEPALIVE_MINUTES` does not run while the service is
 idle; the session is refreshed on the next call instead.
+
+## Authentication (Cloudflare Access)
+
+Cloudflare Access sits in front of the server. For every request it lets
+through, Cloudflare adds a signed JWT in the `Cf-Access-Jwt-Assertion` header.
+The server verifies that JWT itself on every MCP request, so a request that
+reaches the origin directly (the Cloud Run `run.app` URL, the VPS IP, …)
+without going through Access is refused.
+
+- **Token:** `Cf-Access-Jwt-Assertion`, or, if that header is absent,
+  `Authorization: Bearer <jwt>` (same checks).
+- **Checks:** RS256 only; signature against the team's public keys from
+  `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, matched by
+  `kid`; `iss` = `https://<CF_ACCESS_TEAM_DOMAIN>`; `aud` contains one of
+  `CF_ACCESS_AUD`; `exp` / `nbf` with 60 s leeway.
+- **Keys** are cached for an hour. A token with an unknown `kid` (key
+  rotation) triggers a re-fetch, at most once a minute. If a refresh fails,
+  the cached keys keep being used.
+- **Responses:** no or invalid token → `401` with `WWW-Authenticate: Bearer`
+  (the reason is only logged, as `access denied: …`); `CF_ACCESS_*` missing →
+  `500`. `/health`, `/healthz` and `/` need no token.
+
+Where to find the settings:
+
+- `CF_ACCESS_AUD`: Zero Trust → Access → Applications → your application →
+  Overview → **Application Audience (AUD) Tag**. Several applications in front
+  of the same server: comma-separate their tags.
+- `CF_ACCESS_TEAM_DOMAIN`: Zero Trust → Settings → Custom Pages → **Team
+  domain**, e.g. `myteam.cloudflareaccess.com`. `https://myteam.cloudflareaccess.com`
+  and plain `myteam` work too.
+
+Who gets in is decided by the Access application's policies. A client that
+can send fixed headers can use an Access service token
+(`CF-Access-Client-Id` / `CF-Access-Client-Secret`) with a Service Auth
+policy; Access then forwards the request with its JWT.
 
 ## Configuration reference
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ACCESS_TOKEN` | (required) | Bearer token Claude must send; the server exits at startup if it is unset |
+| `CF_ACCESS_TEAM_DOMAIN` | (required) | Cloudflare Access team domain (`myteam.cloudflareaccess.com`, a full `https://` URL, or `myteam`) |
+| `CF_ACCESS_AUD` | (required) | AUD tag of the Access application; comma-separated for several. The server exits at startup if either is unset |
 | `LINK_AUTH_FILE` | `/data/link-auth.json` | link-cli auth file (keep on a persistent volume) |
 | `LINK_CLIENT_NAME` | `Claude (read-only)` | Name shown in the Link app when approving sign-in |
 | `KEEPALIVE_MINUTES` | `0` | If signed in, do one cheap read this often; `0` = off |
@@ -232,11 +273,12 @@ Artifact Registry login, its image line and the Cloud Run steps.
 | File | What it does |
 |---|---|
 | `src/server.js` | Node HTTP server, `/health`, optional keepalive, drains the link-cli queue on shutdown; drops `LINK_*_TOKEN` env vars |
-| `src/index.js` | fetch-style handler: bearer-token check (constant time), routes `/mcp` |
+| `src/index.js` | fetch-style handler: Cloudflare Access check, routes `/mcp` |
+| `src/access.js` | Cloudflare Access JWT verification (WebCrypto): config, JWKS cache and rotation, claim checks |
 | `src/mcp.js` | Stateless MCP over Streamable HTTP (initialize, ping, tools/list, tools/call); server instructions |
 | `src/tools.js` | Tool definitions, argument validation, pagination of `transactions list` |
 | `src/linkcli.js` | Runs link-cli: command allowlist, one-at-a-time queue, minimal child env, JSON parsing, redaction, error messages |
-| `test/` | `node --test`; `fake-link-cli.mjs` stands in for link-cli (state in the auth file, call log next to it) |
+| `test/` | `node --test`; `fake-link-cli.mjs` stands in for link-cli (state in the auth file, call log next to it); `access-helper.js` makes an RSA key and signs Access-style JWTs |
 
 ### link-cli behaviour this relies on (1.3.0)
 
@@ -259,4 +301,4 @@ When bumping link-cli, recheck these and the command allowlist in
 
     npm ci
     npm test        # uses the fake link-cli
-    ACCESS_TOKEN=dev LINK_AUTH_FILE=./data/link-auth.json npm start
+    CF_ACCESS_TEAM_DOMAIN=<team> CF_ACCESS_AUD=<aud> LINK_AUTH_FILE=./data/link-auth.json npm start

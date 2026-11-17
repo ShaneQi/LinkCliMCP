@@ -12,7 +12,7 @@ const args = argv.filter((_, k) => k !== i && k !== i + 1);
 const dir = path.dirname(auth);
 const cfg = fs.existsSync(path.join(dir, "fake.json")) ? JSON.parse(fs.readFileSync(path.join(dir, "fake.json"), "utf8")) : {};
 const log = (o) => fs.appendFileSync(path.join(dir, "log.jsonl"), JSON.stringify(o) + "\n");
-log({ args, at: "start", env: { LINK_REFRESH_TOKEN: process.env.LINK_REFRESH_TOKEN, ACCESS_TOKEN: process.env.ACCESS_TOKEN, NO_UPDATE_NOTIFIER: process.env.NO_UPDATE_NOTIFIER } });
+log({ args, at: "start", env: { LINK_REFRESH_TOKEN: process.env.LINK_REFRESH_TOKEN, CF_ACCESS_AUD: process.env.CF_ACCESS_AUD, NO_UPDATE_NOTIFIER: process.env.NO_UPDATE_NOTIFIER } });
 process.on("exit", () => log({ args, at: "end" }));
 
 const state = fs.existsSync(auth) ? JSON.parse(fs.readFileSync(auth, "utf8")) : {};
