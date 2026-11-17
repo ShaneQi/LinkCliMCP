@@ -11,7 +11,9 @@
 const KEY_TTL_MS = 60 * 60_000; // re-fetch the team's keys after an hour
 const MIN_REFETCH_MS = 60_000; // on an unknown kid, re-fetch at most once a minute
 const LEEWAY_S = 60;
+const FETCH_TIMEOUT_MS = 10_000; // give up on the key endpoint after 10 s
 const keySets = new Map(); // issuer -> { keys: Map(kid -> CryptoKey), fetchedAt }
+const refreshing = new Map(); // issuer -> Promise of the key fetch in progress
 
 /** { issuer, audiences } from env, or null when either variable is missing. */
 export function accessConfig(env) {
@@ -47,25 +49,36 @@ export async function setAccessKeys(issuer, jwks) {
 // For tests: forget every cached key set.
 export function clearAccessKeys() {
   keySets.clear();
+  refreshing.clear();
+}
+
+async function refreshKeys(issuer) {
+  const cached = keySets.get(issuer);
+  try {
+    const res = await fetch(`${issuer}/cdn-cgi/access/certs`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    keySets.set(issuer, { keys: await importKeys(await res.json()), fetchedAt: Date.now() });
+  } catch (e) {
+    if (!cached) throw new Error(`could not fetch Cloudflare Access keys from ${issuer}: ${e?.message ?? e}`);
+    console.warn(`Cloudflare Access key refresh failed, using cached keys: ${e?.message ?? e}`);
+  }
 }
 
 async function keyFor(issuer, kid) {
+  const set = keySets.get(issuer);
   const now = Date.now();
-  let set = keySets.get(issuer);
   const stale = !set || now - set.fetchedAt > KEY_TTL_MS;
   const unknown = set && !set.keys.has(kid) && now - set.fetchedAt > MIN_REFETCH_MS;
   if (stale || unknown) {
-    try {
-      const res = await fetch(`${issuer}/cdn-cgi/access/certs`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      set = { keys: await importKeys(await res.json()), fetchedAt: now };
-      keySets.set(issuer, set);
-    } catch (e) {
-      if (!set) throw new Error(`could not fetch Cloudflare Access keys from ${issuer}: ${e?.message ?? e}`);
-      console.warn(`Cloudflare Access key refresh failed, using cached keys: ${e?.message ?? e}`);
+    // Requests that need new keys at the same time share one fetch.
+    let pending = refreshing.get(issuer);
+    if (!pending) {
+      pending = refreshKeys(issuer).finally(() => refreshing.delete(issuer));
+      refreshing.set(issuer, pending);
     }
+    await pending;
   }
-  return set.keys.get(kid);
+  return keySets.get(issuer).keys.get(kid);
 }
 
 /** Verifies a Cloudflare Access JWT; returns its payload or throws with the reason. */
@@ -80,6 +93,7 @@ export async function verifyAccessJwt(token, config, nowS = Date.now() / 1000) {
     throw new Error("malformed JWT");
   }
   if (header.alg !== "RS256") throw new Error(`unexpected alg ${header.alg}`);
+  if (typeof header.kid !== "string" || !header.kid) throw new Error("missing kid");
   const key = await keyFor(config.issuer, header.kid);
   if (!key) throw new Error("unknown signing key");
   const ok = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, b64urlBytes(parts[2]),

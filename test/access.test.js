@@ -185,3 +185,24 @@ test("setAccessKeys ignores non-RSA keys and keys without kid", async () => {
   await setAccessKeys(ISSUER, { keys: [{ kty: "EC", kid: "e1" }, { ...(await publicJwk(KEY, "k1")), kid: undefined }] });
   await assert.rejects(verifyAccessJwt(await validToken(), CONFIG), /unknown signing key/);
 });
+
+test("rejected: empty kid in the header", async () => {
+  await rejected(await signToken(KEY, {}, { kid: "" }), "missing kid");
+});
+
+test("requests that need new keys at the same time share one fetch, with a timeout", async () => {
+  clearAccessKeys();
+  const jwks = { keys: [await publicJwk(KEY, "k1")] };
+  let fetches = 0;
+  let signal;
+  globalThis.fetch = async (_url, init) => {
+    fetches++;
+    signal = init?.signal;
+    await new Promise((r) => setTimeout(r, 20));
+    return Response.json(jwks);
+  };
+  const t = await validToken();
+  await Promise.all([verifyAccessJwt(t, CONFIG), verifyAccessJwt(t, CONFIG), verifyAccessJwt(t, CONFIG)]);
+  assert.equal(fetches, 1);
+  assert.ok(signal instanceof AbortSignal, "the key fetch is given a timeout signal");
+});
